@@ -8,8 +8,8 @@ An omnichannel customer inbox for Ghanaian businesses: WhatsApp, Instagram, Mess
 |---|---|---|
 | 1 | Stack, folder structure, database schema | ✅ done |
 | 2 | Auth, multi-tenancy, trial and plan enforcement | ✅ done |
-| 3 | WhatsApp Cloud API + web chat widget | next |
-| 4 | Inbox PWA | |
+| 3 | WhatsApp Cloud API + web chat widget | ✅ done |
+| 4 | Inbox PWA | next |
 | 5 | Automation and queue engine | |
 | 6 | Instagram, Messenger, SMS, email | |
 | 7 | MoMo billing and in-chat payments | |
@@ -17,6 +17,7 @@ An omnichannel customer inbox for Ghanaian businesses: WhatsApp, Instagram, Mess
 
 Design, assumptions and third-party flags: [`docs/01-architecture.md`](docs/01-architecture.md).
 Auth, tenancy, trial and plan enforcement: [`docs/02-auth-tenancy.md`](docs/02-auth-tenancy.md).
+WhatsApp Cloud API and web chat widget: [`docs/03-whatsapp-webchat.md`](docs/03-whatsapp-webchat.md).
 
 ## Run the API
 
@@ -25,6 +26,7 @@ pnpm install
 cp .env.example .env     # set JWT_ACCESS_SECRET and ENCRYPTION_KEYS
 pnpm db:migrate
 pnpm dev:api             # and in another terminal: pnpm dev:worker
+pnpm --filter @kasadesk/widget build   # needed for the browser e2e test
 pnpm test                # needs local Postgres + Redis, see docs/02
 ```
 

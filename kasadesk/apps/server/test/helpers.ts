@@ -4,6 +4,14 @@ import { buildApp } from '../src/app.ts';
 import { loadConfig, type Config } from '../src/platform/config.ts';
 import { createDb, type DB } from '../src/platform/db/index.ts';
 import { MemoryNotifier } from '../src/platform/notify.ts';
+import { Keyring } from '../src/platform/crypto.ts';
+import { closeQueues, createQueues } from '../src/platform/queues.ts';
+import { LocalStorage } from '../src/platform/storage.ts';
+import { startWorkers } from '../src/worker.ts';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import pino from 'pino';
 import { APP_URL, REDIS_URL, SYSTEM_URL } from './env.ts';
 
 export const TEST_ENV = {
@@ -18,6 +26,11 @@ export const TEST_ENV = {
   COOKIE_SECURE: 'false',
   AUTH_RATE_LIMIT_PER_MINUTE: '10000',
   RATE_LIMIT_PER_MINUTE: '10000',
+  WIDGET_RATE_LIMIT_PER_MINUTE: '10000',
+  WIDGET_TOKEN_SECRET: 'widget-secret-widget-secret-widget-secret',
+  META_APP_SECRET: 'platform-app-secret',
+  META_VERIFY_TOKEN: 'platform-verify-token',
+  PUBLIC_API_URL: 'http://api.test',
 };
 
 export interface TestCtx {
@@ -27,22 +40,68 @@ export interface TestCtx {
   redis: Redis;
   notifier: MemoryNotifier;
   config: Config;
+  storage: LocalStorage;
+  keyring: Keyring;
   close: () => Promise<void>;
 }
 
-export async function makeTestApp(overrides: Record<string, string> = {}): Promise<TestCtx> {
-  const config = loadConfig({ ...TEST_ENV, ...overrides } as NodeJS.ProcessEnv);
+export interface TestAppOptions {
+  env?: Record<string, string>;
+  /** Run the BullMQ workers + outbox relay in-process. */
+  workers?: boolean;
+}
+
+export async function makeTestApp(opts: TestAppOptions | Record<string, string> = {}): Promise<TestCtx> {
+  // Backwards compatible: a plain object is env overrides.
+  const o: TestAppOptions = 'env' in opts || 'workers' in opts ? (opts as TestAppOptions) : { env: opts as Record<string, string> };
+  const config = loadConfig({ ...TEST_ENV, ...o.env } as NodeJS.ProcessEnv);
   const db = createDb(config.DATABASE_URL, 5);
-  const sys = createDb(config.DATABASE_SYSTEM_URL, 2);
+  const sys = createDb(config.DATABASE_SYSTEM_URL, 3);
   const redis = new Redis(config.REDIS_URL);
   await redis.flushdb();
+  const queueConn = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+  const queues = createQueues(queueConn);
+  const keyring = Keyring.parse(config.ENCRYPTION_KEYS, config.ENCRYPTION_ACTIVE_KEY_ID);
+  const storage = new LocalStorage(mkdtempSync(path.join(tmpdir(), 'kd-media-')));
   const notifier = new MemoryNotifier();
-  const app = await buildApp({ config, db, redis, notifier });
+  const app = await buildApp({ config, db, redis, notifier, queues, keyring, storage });
   await app.ready();
+
+  const runtime = o.workers
+    ? await startWorkers({
+        config, db, sys, connection: queueConn, publisher: redis, keyring, storage, notifier,
+        log: pino({ level: 'silent' }), outboxIntervalMs: 30, schedules: false, backoffMs: 100,
+      })
+    : null;
+
   return {
-    app, db, sys, redis, notifier, config,
-    close: async () => { await app.close(); await db.destroy(); await sys.destroy(); redis.disconnect(); },
+    app, db, sys, redis, notifier, config, storage, keyring,
+    close: async () => {
+      await app.close();
+      await runtime?.close();
+      await closeQueues(queues);
+      await db.destroy();
+      await sys.destroy();
+      redis.disconnect();
+      queueConn.disconnect();
+    },
   };
+}
+
+/** Poll until `fn` returns a truthy value (or throw after `timeoutMs`). */
+export async function waitFor<T>(fn: () => Promise<T | null | undefined | false>, timeoutMs = 8000, label = 'condition'): Promise<T> {
+  const start = Date.now();
+  let last: unknown;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const v = await fn();
+      if (v) return v as T;
+    } catch (err) {
+      last = err;
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error(`timed out waiting for ${label}${last ? `: ${(last as Error).message}` : ''}`);
 }
 
 let seq = 0;

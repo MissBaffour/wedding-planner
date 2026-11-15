@@ -22,16 +22,28 @@ import { billingRoutes } from './modules/billing/routes.ts';
 import { InvitationService } from './modules/tenancy/invitations.ts';
 import { tenancyRoutes } from './modules/tenancy/routes.ts';
 import { TenancyService } from './modules/tenancy/service.ts';
+import { channelRoutes } from './modules/channels/routes.ts';
+import { ChannelService } from './modules/channels/service.ts';
+import { webchatRoutes } from './modules/channels/webchat/routes.ts';
+import { conversationRoutes } from './modules/conversations/routes.ts';
+import { gatewayRoutes } from './modules/gateway/routes.ts';
+import { mediaRoutes } from './modules/media/service.ts';
+import type { Keyring } from './platform/crypto.ts';
+import type { Queues } from './platform/queues.ts';
+import type { ObjectStorage } from './platform/storage.ts';
 
 export interface AppDeps {
   config: Config;
   db: DB;
   redis: Redis;
   notifier: Notifier;
+  queues: Queues;
+  keyring: Keyring;
+  storage: ObjectStorage;
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const { config, db, redis, notifier } = deps;
+  const { config, db, redis, notifier, queues, keyring, storage } = deps;
 
   const app = Fastify({
     trustProxy: config.TRUST_PROXY,
@@ -47,10 +59,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   await app.register(helmet, { contentSecurityPolicy: false }); // JSON API; CSP is set on the PWA host
+  const appOrigins = config.CORS_ORIGINS.split(',').map((s) => s.trim());
   await app.register(cors, {
-    origin: config.CORS_ORIGINS.split(',').map((s) => s.trim()),
-    credentials: true,
-    allowedHeaders: ['content-type', 'authorization', CSRF_HEADER],
+    // The chat widget is embedded on customers' own websites: any origin may call /widget/*
+    // (per-widget allowed origins are checked in the handler). Everything else: the PWA only.
+    delegator: (req, cb) => {
+      if (req.url?.startsWith('/widget/')) {
+        cb(null, { origin: true, credentials: false, allowedHeaders: ['content-type', 'authorization'], maxAge: 86_400 });
+      } else {
+        cb(null, { origin: appOrigins, credentials: true, allowedHeaders: ['content-type', 'authorization', CSRF_HEADER] });
+      }
+    },
   });
   await app.register(cookie);
   await app.register(rateLimit, {
@@ -102,6 +121,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     authRateLimit: { max: config.AUTH_RATE_LIMIT_PER_MINUTE, timeWindow: '1 minute' },
   });
   billingRoutes(app, { plans });
+  const graph = { baseUrl: config.META_GRAPH_BASE_URL, version: config.META_GRAPH_VERSION };
+  channelRoutes(app, { channels: new ChannelService({ db, config, keyring, graph }) });
+  conversationRoutes(app, { db });
+  mediaRoutes(app, { db, storage });
+  gatewayRoutes(app, { db, config, keyring, queues });
+  webchatRoutes(app, { db, config });
 
   return app;
 }
