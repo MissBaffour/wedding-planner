@@ -1,0 +1,40 @@
+{
+  "name": "@kasadesk/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:api": "tsx watch --env-file=../../.env src/main.api.ts",
+    "dev:worker": "tsx watch --env-file=../../.env src/main.worker.ts",
+    "db:migrate": "tsx --env-file-if-exists=../../.env src/platform/db/migrate.cli.ts",
+    "build": "tsup",
+    "start:api": "node dist/main.api.js",
+    "start:worker": "node dist/main.worker.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.0",
+    "@fastify/cors": "^11.0.0",
+    "@fastify/helmet": "^13.0.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@kasadesk/shared": "workspace:*",
+    "@node-rs/argon2": "^2.0.2",
+    "bullmq": "^5.56.0",
+    "fastify": "^5.4.0",
+    "ioredis": "^5.6.0",
+    "jose": "^6.0.0",
+    "kysely": "^0.28.0",
+    "pg": "^8.16.0",
+    "pino": "^9.7.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
